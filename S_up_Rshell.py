@@ -3,9 +3,10 @@ import socket
 import tqdm
 import argparse
 import time
+import setproctitle
 
 
-addr = "0.0.0.0"
+addr = "127.0.0.1"
 port = 5678
 buff_size = 1024 * 128
 sep = "<SEP>"
@@ -17,7 +18,7 @@ def send_file(conn, filename):
         print(f"File does not exist: {filename}")
         return
 
-    file_size = os.path.getsize(filename)
+    file_size = os.stat(filename).st_size
     print(f"Sending: {filename}, size: {file_size}")
     conn.send(f"{filename}{sep}{file_size}".encode())
 
@@ -36,8 +37,8 @@ def send_file(conn, filename):
                 conn.sendall(b"done")
                 break
             conn.sendall(file_chunk)
-            conn.recv(buff_size)
             progress.update(len(file_chunk))
+            conn.recv(buff_size)
 
     print(f"file: {filename} sent successfully !!!")
 
@@ -69,7 +70,7 @@ def recv_file(conn):
         # print(f"Recieved file: {filename}, with size: {file_size}")
 
 
-def helper(s, conn, cwd, cl_addr):
+def helper(s, conn, cwd):
 
     while True:
         msg = input(f"{cwd} $ >")
@@ -99,6 +100,8 @@ def helper(s, conn, cwd, cl_addr):
         else:
             conn.send(msg.encode())
             otpt = conn.recv(buff_size).decode()
+            if otpt == "ACK":
+                otpt = conn.recv(buff_size).decode()
             res, cwd = otpt.rsplit(sep, 1)
             print(res)
 
@@ -115,15 +118,13 @@ def main():
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((args.ip, args.port))
-    s.listen(5)
-
-    conn, cl_addr = s.accept()
-    cwd = conn.recv(buff_size).decode()
-    helper(s, conn, cwd, cl_addr)
+    s.connect((addr, port))
+    cwd = s.recv(buff_size).decode()
+    helper(s, s, cwd)
 
     # conn.close()
     s.close()
 
 
-main()
+if __name__ == "__main__":
+    main()

